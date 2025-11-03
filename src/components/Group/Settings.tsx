@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useCallback, useState } from "react";
 import Button from "@mui/material/Button";
 import Dialog from "@mui/material/Dialog";
 import ListItemText from "@mui/material/ListItemText";
@@ -24,7 +25,7 @@ import { getGroupMembers, getNames } from "./Group";
 import { LoadingSnackbar } from "../Snackbar/LoadingSnackbar";
 import { getFee } from "../../background";
 import { LoadingButton } from "@mui/lab";
-import { subscribeToEvent, unsubscribeFromEvent } from "../../utils/events";
+import { executeEvent, subscribeToEvent, unsubscribeFromEvent } from "../../utils/events";
 
 function a11yProps(index: number) {
   return {
@@ -81,6 +82,7 @@ export const Settings = ({
   setOpen,
 }) => {
   const [checked, setChecked] = React.useState(false);
+  const [generalChatEnabled, setGeneralChatEnabled] = useState(true);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setChecked(event.target.checked);
@@ -97,11 +99,44 @@ export const Settings = ({
     );
   };
 
+  const handleGeneralChatChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextEnabled = event.target.checked;
+    setGeneralChatEnabled(nextEnabled);
+    // Store as disable flag
+    new Promise((resolve, reject) => {
+      chrome?.runtime?.sendMessage(
+        {
+          action: "addUserSettings",
+          payload: {
+            keyValue: {
+              key: "disable-general-chat",
+              value: !nextEnabled,
+            },
+          },
+        },
+        (response) => {
+          if (!response?.error) {
+            resolve(response);
+            return;
+          }
+          reject(response.error);
+        }
+      );
+    }).catch((error) => {
+      console.error(
+        "Failed to add user settings:",
+        error?.message || error || "An error occurred"
+      );
+    });
+    // Notify the app to update visibility immediately
+    executeEvent('generalChatVisibilityChanged', { disabled: !nextEnabled });
+  };
+
   const handleClose = () => {
     setOpen(false);
   };
 
-  const getUserSettings = async () => {
+  const getUserSettings = useCallback(async () => {
     try {
       return new Promise((res, rej) => {
         chrome?.runtime?.sendMessage(
@@ -124,11 +159,37 @@ export const Settings = ({
     } catch (error) {
       console.log("error", error);
     }
-  };
+  }, [setChecked]);
+
+  const getGeneralChatSetting = useCallback(async () => {
+    try {
+      return new Promise((res, rej) => {
+        chrome?.runtime?.sendMessage(
+          {
+            action: "getUserSettings",
+            payload: {
+              key: "disable-general-chat",
+            },
+          },
+          (response) => {
+            if (!response?.error) {
+              setGeneralChatEnabled(!(response || false));
+              res(response);
+              return;
+            }
+            rej(response.error);
+          }
+        );
+      });
+    } catch (error) {
+      console.log('error', error);
+    }
+  }, [setGeneralChatEnabled]);
 
   React.useEffect(() => {
     getUserSettings();
-  }, []);
+    getGeneralChatSetting();
+  }, [getUserSettings, getGeneralChatSetting]);
 
  
 
@@ -143,7 +204,7 @@ export const Settings = ({
         <AppBar sx={{ position: "relative", bgcolor: "#232428" }}>
           <Toolbar>
             <Typography sx={{ ml: 2, flex: 1 }} variant="h6" component="div">
-             General Settings
+              General Settings
             </Typography>
             <IconButton
               edge="start"
@@ -164,26 +225,33 @@ export const Settings = ({
             padding: '20px'
           }}
         >
-        
-        <FormControlLabel
-      sx={{
-        color: 'white'
-      }}
-        control={<LocalNodeSwitch  checked={checked}
-        onChange={handleChange}  />}
-        label="Disable all push notifications"
-      />
-          
 
+          <FormControlLabel
+            sx={{
+              color: 'white'
+            }}
+            control={<LocalNodeSwitch checked={checked}
+              onChange={handleChange} />}
+            label="Disable all push notifications"
+          />
 
-         
-          
-         
+          <FormControlLabel
+            sx={{
+              color: 'white',
+            }}
+            control={
+              <LocalNodeSwitch
+                checked={generalChatEnabled}
+                onChange={handleGeneralChatChange}
+              />
+            }
+            label="General chat"
+          />
+
         </Box>
-     
-       
+
       </Dialog>
-      
+
     </React.Fragment>
   );
 };
