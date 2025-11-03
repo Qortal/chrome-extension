@@ -17,7 +17,6 @@ import { useRecoilState } from 'recoil';
 import { mailsAtom, qMailLastEnteredTimestampAtom } from '../../atoms/global';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread';
 export const isLessThanOneWeekOld = (timestamp) => {
   // Current time in milliseconds
   const now = Date.now();
@@ -142,9 +141,28 @@ export const QMailMessages = ({userName, userAddress}) => {
       >
         Latest Q-Mails
       </Typography>
-      <MarkEmailUnreadIcon sx={{
-        color: anyUnread ? 'var(--unread)' : 'white'
-      }}/>
+        <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+          {anyUnread && (
+            <div
+              style={{
+                backgroundColor: 'var(--unread)',
+                borderRadius: '50%',
+                height: '15px',
+                outline: '1px solid white',
+                position: 'absolute',
+                right: '-7px',
+                top: '-7px',
+                width: '15px',
+                zIndex: 1,
+              }}
+            />
+          )}
+          <MailIcon
+            sx={{
+              color: anyUnread ? 'var(--unread)' : 'white',
+            }}
+          />
+        </Box>
      {isExpanded ? <ExpandLessIcon sx={{
       marginLeft: 'auto'
      }} /> : (
