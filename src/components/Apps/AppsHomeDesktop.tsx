@@ -26,7 +26,7 @@ export const AppsHomeDesktop = ({
   myName,
   myAddress
 }) => {
-  const [qortalUrl, setQortalUrl] = useState('')
+  const [qortalUrl, setQortalUrl] = useState('qortal://')
 
   const openQortalUrl = ()=> {
     try {
