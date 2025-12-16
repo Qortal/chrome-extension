@@ -1,5 +1,5 @@
 import { banFromGroup, gateways, getApiKeyFromStorage, getNameInfoForOthers } from "./background";
-import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banFromGroupRequest, buyNameRequest, cancelGroupBanRequest, cancelGroupInviteRequest, cancelSellNameRequest, cancelSellOrder, createBuyOrder, createGroupRequest, createPoll, createSellOrder, decryptAESGCMRequest, decryptData, decryptDataWithSharingKey, decryptQortalGroupData, deleteHostedData, deleteListItems, deployAt, encryptData, encryptDataWithSharingKey, encryptQortalGroupData, getArrrSyncStatus, getCrossChainServerInfo, getDaySummary, getForeignFee, getHostedData, getListItems, getNodeInfo, getNodeStatus, getServerConnectionHistory, getTxActivitySummary, getUserAccount, getUserWallet, getUserWalletInfo, getUserWalletTransactions, getWalletBalance, inviteToGroupRequest, joinGroup, kickFromGroupRequest, leaveGroupRequest, multiPaymentWithPrivateData, publishMultipleQDNResources, publishQDNResource, registerNameRequest, removeForeignServer, removeGroupAdminRequest, saveFile, sellNameRequest, sendChatMessage, sendCoin, setCurrentForeignServer, showPdfReader, signForeignFees, signTransaction, transferAssetRequest, updateForeignFee, updateGroupRequest, updateNameRequest, voteOnPoll } from "./qortalRequests/get";
+import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banFromGroupRequest, buyNameRequest, cancelGroupBanRequest, cancelGroupInviteRequest, cancelSellNameRequest, cancelSellOrder, createBuyOrder, createGroupRequest, createPoll, createSellOrder, decryptAESGCMRequest, decryptData, decryptDataWithSharingKey, decryptQortalGroupData, deleteHostedData, deleteListItems, deployAt, encryptData, encryptDataWithSharingKey, encryptQortalGroupData, getArrrSyncStatus, getCrossChainServerInfo, getDaySummary, getForeignFee, getHostedData, getListItems, getNodeInfo, getNodeStatus, getServerConnectionHistory, getTxActivitySummary, getUserAccount, getUserWallet, getUserWalletInfo, getUserWalletTransactions, getWalletBalance, inviteToGroupRequest, joinGroup, kickFromGroupRequest, leaveGroupRequest,  multiPaymentWithPrivateData, publishMultipleQDNResources, publishQDNResource, reEncryptQortalKeys, registerNameRequest, removeForeignServer, removeGroupAdminRequest, saveFile, sellNameRequest, sendChatMessage, sendCoin, sessionPermissions, setCurrentForeignServer, showPdfReader, signForeignFees, signTransaction, transferAssetRequest,  updateForeignFee, updateGroupRequest, updateNameRequest, voteOnPoll } from "./qortalRequests/get";
 
  export const listOfAllQortalRequests = [
    'GET_USER_ACCOUNT',
@@ -90,6 +90,11 @@ import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banF
  'TRANSFER_ASSET',
  'SIGN_FOREIGN_FEES',
  'GET_PRIMARY_NAME',
+   'SESSION_PERMISSIONS',
+  'LOCK_TAB',
+  'UNLOCK_TAB',
+  'WHICH_UI',
+   'REENCRYPT_GROUP_KEYS',
  ]
 
 // Promisify chrome.storage.local.get
@@ -156,6 +161,142 @@ function getLocalStorage(key) {
     }
   }
 
+  // In-memory storage for session permissions
+const sessionPermissionsStore = new Map<
+  string,
+  {
+    permissions: string[];
+    timestamp: number;
+  }
+>();
+
+// Valid permissions that can be granted in a session
+export const VALID_SESSION_PERMISSIONS = [
+  'JOIN_GROUP',
+  'GET_USER_WALLET',
+  'GET_WALLET_BALANCE',
+  'GET_USER_WALLET_TRANSACTIONS',
+  'GET_USER_WALLET_INFO',
+  'UPDATE_FOREIGN_FEE',
+  'GET_SERVER_CONNECTION_HISTORY',
+  'SET_CURRENT_FOREIGN_SERVER',
+  'ADD_FOREIGN_SERVER',
+  'REMOVE_FOREIGN_SERVER',
+  'LOCK_TAB',
+  'INVITE_TO_GROUP',
+  'KICK_FROM_GROUP',
+  'BAN_FROM_GROUP',
+  'CANCEL_GROUP_BAN',
+  'REMOVE_GROUP_ADMIN',
+  'ADD_GROUP_ADMIN',
+  'CREATE_GROUP',
+  'PUBLISH_QDN_RESOURCE',
+  'PUBLISH_MULTIPLE_QDN_RESOURCES',
+  'GET_USER_ACCOUNT',
+  'GET_LIST_ITEMS',
+  'SIGN_FOREIGN_FEES',
+   'REENCRYPT_GROUP_KEYS'
+];
+
+// Permissions automatically granted for the session when GET_USER_ACCOUNT is accepted
+// These are read-only, low-risk permissions
+export const AUTO_GRANTED_PERMISSIONS_ON_AUTH = [
+  'GET_USER_ACCOUNT',
+  'GET_USER_WALLET',
+  'GET_WALLET_BALANCE',
+  'GET_USER_WALLET_INFO',
+  'GET_USER_WALLET_TRANSACTIONS',
+  'GET_LIST_ITEMS',
+  'SIGN_FOREIGN_FEES',
+];
+
+export function setSessionPermissions(tabId, qapName, permissions) {
+  try {
+    const key = `${tabId}-${qapName}`;
+
+    // Get existing permissions for this tab+app
+    const existing = sessionPermissionsStore.get(key);
+    const existingPermissions = existing?.permissions || [];
+
+    // Validate new permissions
+    const validPermissions = permissions.filter((permission) =>
+      VALID_SESSION_PERMISSIONS.includes(permission)
+    );
+
+    // Merge with existing permissions (deduplicate using Set)
+    const mergedPermissions = [
+      ...new Set([...existingPermissions, ...validPermissions]),
+    ];
+
+    sessionPermissionsStore.set(key, {
+      permissions: mergedPermissions,
+      timestamp: Date.now(),
+    });
+
+    return mergedPermissions;
+  } catch (error) {
+    console.error('Error setting session permissions:', error);
+    throw error;
+  }
+}
+
+export function getSessionPermissions(tabId, qapName) {
+  try {
+    const key = `${tabId}-${qapName}`;
+    const sessionData = sessionPermissionsStore.get(key);
+
+    return sessionData?.permissions || [];
+  } catch (error) {
+    console.error('Error getting session permissions:', error);
+    return [];
+  }
+}
+
+export function hasSessionPermission(tabId, qapName, requestType) {
+  try {
+    const permissions = getSessionPermissions(tabId, qapName);
+    return permissions.includes(requestType);
+  } catch (error) {
+    console.error('Error checking session permission:', error);
+    return false;
+  }
+}
+
+export function clearSessionPermissions(tabId, qapName) {
+  try {
+    const key = `${tabId}-${qapName}`;
+    sessionPermissionsStore.delete(key);
+  } catch (error) {
+    console.error('Error clearing session permissions:', error);
+    throw error;
+  }
+}
+
+export function clearAllSessionPermissions() {
+  try {
+    sessionPermissionsStore.clear();
+  } catch (error) {
+    console.error('Error clearing all session permissions:', error);
+    throw error;
+  }
+}
+
+export function clearSessionPermissionsByTabId(tabId) {
+  try {
+    // Find all keys that start with this tabId and remove them
+    const keysToDelete = [];
+    for (const key of sessionPermissionsStore.keys()) {
+      if (key.startsWith(`${tabId}-`)) {
+        keysToDelete.push(key);
+      }
+    }
+    keysToDelete.forEach((key) => sessionPermissionsStore.delete(key));
+  } catch (error) {
+    console.error('Error clearing session permissions by tabId:', error);
+    throw error;
+  }
+}
+
 
   // TODO: GET_FRIENDS_LIST
   // NOT SURE IF TO IMPLEMENT: LINK_TO_QDN_RESOURCE, QDN_RESOURCE_DISPLAYED, SET_TAB_NOTIFICATIONS
@@ -190,6 +331,13 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
 
         break;
       }
+      case "WHICH_UI": {
+        
+        sendResponse('EXTENSION');
+
+        break;
+      }
+     
       case "DECRYPT_DATA": {
         const data = request.payload;
         
@@ -206,7 +354,7 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
       case "GET_LIST_ITEMS": {
         const data = request.payload;
         
-        getListItems(data, isFromExtension)
+        getListItems(data, appInfo, isFromExtension)
           .then((res) => {
             sendResponse(res);
           })
@@ -245,7 +393,7 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
       case "PUBLISH_QDN_RESOURCE": {
         const data = request.payload;
         
-        publishQDNResource(data, sender, isFromExtension)
+        publishQDNResource(data, sender, isFromExtension, appInfo)
           .then((res) => {
             sendResponse(res);
           })
@@ -309,7 +457,7 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
       case "JOIN_GROUP": {
         const data = request.payload;
       
-        joinGroup(data, isFromExtension)
+        joinGroup(data, isFromExtension, appInfo)
           .then((res) => {
             sendResponse(res);
           })
@@ -429,7 +577,7 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
     case "UPDATE_FOREIGN_FEE": {
         const data = request.payload;
     
-        updateForeignFee(data, isFromExtension)
+        updateForeignFee(data, isFromExtension, appInfo)
             .then((res) => {
                 sendResponse(res);
             })
@@ -457,7 +605,7 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
     case "SET_CURRENT_FOREIGN_SERVER": {
         const data = request.payload;
     
-        setCurrentForeignServer(data, isFromExtension)
+        setCurrentForeignServer(data, isFromExtension, appInfo)
             .then((res) => {
                 sendResponse(res);
             })
@@ -471,7 +619,7 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
     case "ADD_FOREIGN_SERVER": {
         const data = request.payload;
     
-        addForeignServer(data, isFromExtension)
+        addForeignServer(data, isFromExtension, appInfo)
             .then((res) => {
                 sendResponse(res);
             })
@@ -485,7 +633,7 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
     case "REMOVE_FOREIGN_SERVER": {
         const data = request.payload;
     
-        removeForeignServer(data, isFromExtension)
+        removeForeignServer(data, isFromExtension, appInfo)
             .then((res) => {
                 sendResponse(res);
             })
@@ -935,7 +1083,19 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
       case "SIGN_FOREIGN_FEES": {
         const data = request.payload;
       
-        signForeignFees(data, isFromExtension)
+        signForeignFees(data, appInfo, isFromExtension)
+          .then((res) => {
+            sendResponse(res);
+          })
+          .catch((error) => {
+            sendResponse({ error: error.message });
+          });
+        break;
+      }
+        case "SESSION_PERMISSIONS": {
+        const data = request.payload;
+      
+        sessionPermissions(data,  isFromExtension, appInfo)
           .then((res) => {
             sendResponse(res);
           })
@@ -957,6 +1117,20 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
           });
         break;
       }
+
+       case "REENCRYPT_GROUP_KEYS": {
+        const data = request.payload;
+      
+        reEncryptQortalKeys(data,  isFromExtension, appInfo)
+          .then((res) => {
+            sendResponse(res);
+          })
+          .catch((error) => {
+            sendResponse({ error: error.message });
+          });
+        break;
+      }
+     
     }
   }
   return true;

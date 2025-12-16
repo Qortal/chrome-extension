@@ -580,7 +580,66 @@ async function uploadChunkWithRetry(endpoint, formData, index, maxRetries = 3) {
   }
 }
 
-async function handleSendDataChunksToCore(fileId, chunkUrl, sendResponse){
+function deriveCtrCounter(iv, blockOffset) {
+  const counter = new Uint8Array(iv);
+  let carry = blockOffset;
+
+  for (let i = 15; i >= 0 && carry > 0n; i--) {
+    const sum = BigInt(counter[i]) + (carry & 0xffn);
+    counter[i] = Number(sum & 0xffn);
+    carry = (carry >> 8n) + (sum >> 8n);
+  }
+  return counter;
+}
+
+async function encryptAesCtrChunkWithFallback(
+  keyBytes,
+  ivBytes,
+  blockOffset,
+  plaintext
+) {
+  // Try WebCrypto first
+ 
+    try {
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        keyBytes,
+        { name: 'AES-CTR' },
+        false,
+        ['encrypt']
+      );
+
+      const counter = deriveCtrCounter(ivBytes, blockOffset);
+
+      const encrypted = await crypto.subtle.encrypt(
+        {
+          name: 'AES-CTR',
+          counter,
+          length: 128,
+        },
+        cryptoKey,
+        plaintext
+      );
+
+      return new Uint8Array(encrypted);
+    } catch (e) {
+      console.warn('WebCrypto AES-CTR failed, falling back:', e);
+    }
+  
+
+}
+
+function base64ToUint8Array(base64) {
+	const binaryString = atob(base64)
+	const len = binaryString.length
+	const bytes = new Uint8Array(len)
+	for (let i = 0; i < len; i++) {
+		bytes[i] = binaryString.charCodeAt(i)
+	}
+	return bytes
+}
+
+async function handleSendDataChunksToCore(fileId, chunkUrl, encryption, sendResponse){
   try {
     if(!fileReferences[fileId]) throw new Error('No file reference found')
       const chunkSize = 5 * 1024 * 1024; // 5MB
@@ -588,16 +647,44 @@ async function handleSendDataChunksToCore(fileId, chunkUrl, sendResponse){
       const file = fileReferences[fileId]
       const totalChunks = Math.ceil(file.size / chunkSize);
 
+    const keyBytes = encryption?.key || null;
+    const ivBytes = encryption?.iv || null;
+
+              let bytesProcessed = 0;
     for (let index = 0; index < totalChunks; index++) {
       const start = index * chunkSize;
       const end = Math.min(start + chunkSize, file.size);
-      const chunk = file.slice(start, end);
+       const rawChunkBlob = file.slice(start, end);
 
+      let chunkToUpload;
+
+      if (encryption == null) {
+        // NO ENCRYPTION —
+        chunkToUpload = rawChunkBlob;
+      } else {
+        //  ENCRYPTION ENABLED — AES-CTR encrypt this chunk
+        const rawBytes = new Uint8Array(await rawChunkBlob.arrayBuffer());
+
+        const blockOffset = BigInt(bytesProcessed >> 4);
+
+        const encryptedBytes = await encryptAesCtrChunkWithFallback(
+          base64ToUint8Array(keyBytes),
+          base64ToUint8Array(ivBytes),
+          blockOffset,
+          rawBytes
+        );
+
+        chunkToUpload = new Blob([encryptedBytes]);
+        bytesProcessed += rawBytes.length;
+      }
+
+      // Upload the (encrypted or raw) chunk
       const formData = new FormData();
-      formData.append('chunk', chunk, file.name); // Optional: include filename
+      formData.append('chunk', chunkToUpload, file.name);
       formData.append('index', index);
+  
+        await uploadChunkWithRetry(chunkUrl, formData, index);
 
-      await uploadChunkWithRetry(chunkUrl, formData, index);
     }
     sendResponse({ result: true });
   } catch (error) {
@@ -725,7 +812,7 @@ chrome.runtime?.onMessage.addListener( function (message, sender, sendResponse) 
     handleGetFileFromIndexedDB(message.fileId, sendResponse);
     return true; // Keep the message channel open for async response
   } else  if (message.action === "sendDataChunksToCore") {
-    handleSendDataChunksToCore(message.fileId, message.chunkUrl, sendResponse);
+    handleSendDataChunksToCore(message.fileId, message.chunkUrl, message?.encryption, sendResponse);
     return true; // Keep the message channel open for async response
   } else if(message.action === "getFileBase64"){
     handleGetFileBase64(message.fileId, sendResponse);

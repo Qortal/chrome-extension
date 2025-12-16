@@ -36,9 +36,11 @@ import {
   transferAsset,
   getAssetInfo,
   getNameOrAddress,
-  getAssetBalanceInfo
+  getAssetBalanceInfo,
+  sendChatNotification,
+  sendChatGroup
 } from "../background";
-import { decryptGroupEncryption, getAllUserNames, getNameInfo, uint8ArrayToObject } from "../backgroundFunctions/encryption";
+import { decryptGroupEncryption, encryptAndPublishSymmetricKeyGroupChat, getAllUserNames, getNameInfo, uint8ArrayToObject } from "../backgroundFunctions/encryption";
 import { QORT_DECIMALS } from "../constants/constants";
 import Base58 from "../deps/Base58";
 
@@ -51,12 +53,13 @@ import {
   decryptSingle,
   encryptDataGroup,
   encryptSingle,
+  hasPrivateString,
   objectToBase64,
   uint8ArrayStartsWith,
   uint8ArrayToBase64,
 } from "../qdn/encryption/group-encryption";
 import { publishData } from "../qdn/publish/pubish";
-import { getPermission, setPermission, isRunningGateway } from "../qortalRequests";
+import { getPermission, setPermission, isRunningGateway, hasSessionPermission, setSessionPermissions, VALID_SESSION_PERMISSIONS, AUTO_GRANTED_PERMISSIONS_ON_AUTH } from "../qortalRequests";
 import { createTransaction } from "../transactions/transactions";
 import { mimeToExtensionMap } from "../utils/memeTypes";
 import TradeBotCreateRequest from "../transactions/TradeBotCreateRequest";
@@ -68,7 +71,8 @@ import { RequestQueueWithPromise } from "../utils/queue/queue";
 import { Sha256 } from "asmcrypto.js";
 import ed2curve from "../deps/ed2curve";
 import { executeEvent } from "../utils/events";
-import { isValidBase64WithDecode } from "../utils/decode";
+import { isValidBase64WithDecode, validateAesCtrIvAndKey } from "../utils/decode";
+import { PUBLIC_NOTIFICATION_CODE_FIRST_SECRET_KEY } from "../constants/codes";
 
 export const requestQueueGetAtAddresses = new RequestQueueWithPromise(10);
 
@@ -425,11 +429,18 @@ function getFileFromContentScript(fileId, sender) {
   });
 }
 
-export function sendDataChunksToCore(fileId, chunkUrl, sender, appInfo, resourceInfo) {
+export function sendDataChunksToCore(fileId, chunkUrl, sender, appInfo, resourceInfo, encryption) {
   return new Promise((resolve, reject) => {
+    let copyEncryption = null
+    if(encryption){
+      copyEncryption = structuredClone(encryption)
+      copyEncryption.iv = uint8ArrayToBase64(encryption.iv)
+      copyEncryption.key = uint8ArrayToBase64(encryption.key)
+    }
+
     chrome.tabs.sendMessage(
       sender.tab.id,
-      { action: "sendDataChunksToCore", fileId: fileId, chunkUrl, appInfo, resourceInfo },
+      { action: "sendDataChunksToCore", fileId: fileId, chunkUrl, appInfo, resourceInfo, encryption: copyEncryption },
       (response) => {
         if (response && response.result) {
           resolve(response.result);
@@ -620,6 +631,15 @@ export const getUserAccount = async ({isFromExtension, appInfo, skipAuth}) => {
     if(skipAuth){
       skip = true
     }
+    let hadSessionPermissions = false;
+     if (
+      appInfo?.tabId &&
+      appInfo?.name &&
+      hasSessionPermission(appInfo.tabId, appInfo.name, 'GET_USER_ACCOUNT')
+    ) {
+      skip = true;
+      hadSessionPermissions = true
+    }
     let resPermission
     if(!skip){
       resPermission = await getUserPermission({
@@ -636,7 +656,13 @@ export const getUserAccount = async ({isFromExtension, appInfo, skipAuth}) => {
      setPermission(`qAPPAutoAuth-${appInfo?.name}`, checkbox1);
    }
    if (accepted  || skip) {
-
+if (!hadSessionPermissions && appInfo?.tabId && appInfo?.name) {
+        setSessionPermissions(
+          appInfo.tabId,
+          appInfo.name,
+          AUTO_GRANTED_PERMISSIONS_ON_AUTH
+        );
+      }
     const wallet = await getSaveWallet();
     const address = wallet.address0;
     const publicKey = wallet.publicKey;
@@ -649,7 +675,6 @@ export const getUserAccount = async ({isFromExtension, appInfo, skipAuth}) => {
 
   }
   } catch (error) {
-    console.log('per error', error)
     throw new Error("Unable to fetch user account");
   }
 };
@@ -722,7 +747,7 @@ export const decryptData = async (data) => {
   throw new Error("Unable to decrypt");
 };
 
-export const getListItems = async (data, isFromExtension) => {
+export const getListItems = async (data, appInfo, isFromExtension) => {
   const  isGateway =  await isRunningGateway()
   if(isGateway){
     throw new Error("This action cannot be done through a public node");
@@ -743,6 +768,14 @@ export const getListItems = async (data, isFromExtension) => {
 
   let skip = false;
   if (value) {
+    skip = true;
+  }
+  if (
+    !skip &&
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'GET_LIST_ITEMS')
+  ) {
     skip = true;
   }
   let resPermission;
@@ -891,7 +924,7 @@ export const deleteListItems = async (data, isFromExtension) => {
   }
 };
 
-export const publishQDNResource = async (data: any, sender, isFromExtension) => {
+export const publishQDNResource = async (data: any, sender, isFromExtension,appInfo) => {
   const requiredFields = ["service"];
   const missingFields: string[] = [];
   requiredFields.forEach((field) => {
@@ -930,6 +963,28 @@ export const publishQDNResource = async (data: any, sender, isFromExtension) => 
   const category = data.category;
  const tags = data?.tags || [];
  const isMultiFileZip = data?.isMultiFileZip === true;
+ let encryption: any = null;
+  if (data?.encryption) {
+    encryption = structuredClone(data?.encryption);
+  }
+
+  const encryptionType = encryption?.encryptionType || 'standard';
+  const isStreamedEncryption = encryptionType === 'streamed-v1';
+  if (isStreamedEncryption && (!encryption?.iv || !encryption?.key)) {
+    throw new Error('Missing IV or Key');
+  }
+
+  if (isStreamedEncryption && !data?.fileId) {
+    throw new Error('File required for encryption streamed-v1');
+  }
+  if (isStreamedEncryption && encryption?.iv && encryption?.key) {
+    const { isValid } = validateAesCtrIvAndKey(encryption.iv, encryption.key);
+    if (!isValid) {
+      throw new Error('Invalid IV or Key');
+    }
+    encryption.iv = base64ToUint8Array(encryption.iv);
+    encryption.key = base64ToUint8Array(encryption.key);
+  }
 const result = {};
 
 // Fill tags dynamically while maintaining backward compatibility
@@ -993,17 +1048,40 @@ const { tag1, tag2, tag3, tag4, tag5 } = result;
     handleDynamicValues['highlightedText'] = `isEncrypted: ${!!data.encrypt}`
   }
 
-  const resPermission = await getUserPermission({
+    // Check for session permission
+  const hasPermission =
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'PUBLISH_QDN_RESOURCE');
+
+  
+  let acceptVar = hasPermission || false;
+  let checkbox1Var = false;
+  if (!hasPermission) {
+   const resPermission = await getUserPermission({
     text1: "Do you give this application permission to publish to QDN?",
     text2: `service: ${service}`,
     text3: `identifier: ${identifier || null}`,
+    text4: `name: ${registeredName}`,
     fee: fee.fee,
     ...handleDynamicValues
   }, isFromExtension);
 
-    const { accepted, checkbox1 = false } = resPermission;
+    const { accepted, checkbox1 = false } = resPermission || {
+        accepted: false,
+        checkbox1: false,
+      };
+      if (accepted) {
+        acceptVar = accepted;
+      }
+      if (checkbox1) {
+        checkbox1Var = checkbox1;
+      }
 
-  if (accepted) {
+  }
+
+
+  if (acceptVar) {
 
     try {
       const resPublish = await publishData({
@@ -1011,7 +1089,13 @@ const { tag1, tag2, tag3, tag4, tag5 } = result;
         data: data64 ? data64 : data?.fileId,
         service: service,
         identifier: encodeURIComponent(identifier),
-        uploadType: isMultiFileZip ? 'zip' :  data64 ? "base64" : "file",
+        uploadType: isStreamedEncryption
+          ? 'file'
+          : isMultiFileZip
+            ? 'zip'
+            : data64
+              ? 'base64'
+              : 'file',
         filename: filename,
         title,
         description,
@@ -1023,9 +1107,11 @@ const { tag1, tag2, tag3, tag4, tag5 } = result;
         tag5,
         apiVersion: 2,
         withFee: true,
-        sender
+        sender,
+        appInfo,
+         encryption: isStreamedEncryption ? encryption : null,
       });
-      if(resPublish?.signature && hasAppFee && checkbox1){
+      if(resPublish?.signature && hasAppFee && checkbox1Var){
         sendCoinFunc({
          amount: appFee,
          receiver: appFeeRecipient
@@ -1033,6 +1119,7 @@ const { tag1, tag2, tag3, tag4, tag5 } = result;
      }
       return resPublish;
     } catch (error) {
+
       throw new Error(error?.message || "Upload failed");
     }
   } else {
@@ -1100,13 +1187,47 @@ export const publishMultipleQDNResources = async (data: any, sender, isFromExten
   const encrypt = data?.encrypt
 
   for (const resource of resources) {
-    const resourceEncrypt = encrypt && resource?.disableEncrypt !== true
-    if (!resourceEncrypt && resource?.service.endsWith("_PRIVATE")) {
-      const errorMsg = "Only encrypted data can go into private services";
+    const resourceEncrypt = encrypt && resource?.disableEncrypt !== true;
+     const base64Data = resource?.data64 || resource?.base64;
+    if (
+      !resourceEncrypt &&
+      !!base64Data &&
+      resource?.service.endsWith('_PRIVATE') &&
+      hasPrivateString(base64Data)
+    ) {
+      continue;
+    } else if (!resourceEncrypt && resource?.service.endsWith('_PRIVATE')) {
+     const errorMsg = "Only encrypted data can go into private services";
       throw new Error(errorMsg)
-    } else if(resourceEncrypt && !resource?.service.endsWith("_PRIVATE")){
+    } else if (resourceEncrypt && !resource?.service.endsWith('_PRIVATE')) {
       const errorMsg = "For an encrypted publish please use a service that ends with _PRIVATE";
       throw new Error(errorMsg)
+    } else {
+      const encryption = resource?.encryption;
+
+      const encryptionType = encryption?.encryptionType || 'standard';
+      const isStreamedEncryption = encryptionType === 'streamed-v1';
+      if (encryption && !isStreamedEncryption) {
+        throw new Error('Encryption type not supported');
+      }
+      if (isStreamedEncryption && (!encryption?.iv || !encryption?.key)) {
+        throw new Error('Missing IV or Key');
+      }
+
+      if (isStreamedEncryption && !resource?.file) {
+        throw new Error('File required for encryption streamed-v1');
+      }
+
+      // Decode base64 iv and key to Uint8Array
+      if (isStreamedEncryption && encryption?.iv && encryption?.key) {
+        const { isValid } = validateAesCtrIvAndKey(
+          encryption.iv,
+          encryption.key
+        );
+        if (!isValid) {
+          throw new Error('Invalid IV or Key');
+        }
+      }
     }
   }
 
@@ -1146,7 +1267,20 @@ export const publishMultipleQDNResources = async (data: any, sender, isFromExten
     handleDynamicValues['highlightedText'] = `isEncrypted: ${!!data.encrypt}`
   }
 
-  const resPermission = await getUserPermission({
+  const hasPermission =
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(
+      appInfo.tabId,
+      appInfo.name,
+      'PUBLISH_MULTIPLE_QDN_RESOURCES'
+    );
+
+   let acceptVar = hasPermission || false;
+  let checkbox1Var = false;
+  if (!hasPermission) {
+
+   const resPermission = await getUserPermission({
     text1: "Do you give this application permission to publish to QDN?",
     html: `
     <div style="max-height: 30vh; overflow-y: auto;">
@@ -1214,10 +1348,20 @@ export const publishMultipleQDNResources = async (data: any, sender, isFromExten
       ...handleDynamicValues
   }, isFromExtension);
 
-  
-  const { accepted, checkbox1 = false } = resPermission;
+     const { accepted, checkbox1 = false } = resPermission || {
+      accepted: false,
+      checkbox1: false,
+    };
+    if (accepted) {
+      acceptVar = accepted;
+    }
+    if (checkbox1) {
+      checkbox1Var = checkbox1;
+    }
+}
 
-  if (!accepted) {
+
+  if (!acceptVar) {
     throw new Error("User declined request");
   }
   let failedPublishesIdentifiers = [];
@@ -1274,7 +1418,16 @@ export const publishMultipleQDNResources = async (data: any, sender, isFromExten
       if (resource.identifier == null) {
         identifier = "default";
       }
-      if (!resourceEncrypt  && service.endsWith("_PRIVATE")) {
+      
+   const skipEncryptIfAlreadyEncrypted =
+        !resourceEncrypt &&
+        service.endsWith('_PRIVATE') &&
+        hasPrivateString(rawData);
+      if (
+        !resourceEncrypt &&
+        service.endsWith('_PRIVATE') &&
+        !skipEncryptIfAlreadyEncrypted
+      ) {
         const errorMsg = "Only encrypted data can go into private services";
         failedPublishesIdentifiers.push({
           reason: errorMsg,
@@ -1322,12 +1475,23 @@ export const publishMultipleQDNResources = async (data: any, sender, isFromExten
       }
 
       try {
-        const dataType =
-       isMultiFileZip
-          ? 'zip'
-          :  (resource?.base64 || resource?.data64 || resourceEncrypt)
-          ? 'base64'
-          : 'file';
+        const preEncryption = resource?.encryption;
+        let encryption: any = null;
+        if (preEncryption) {
+          encryption = structuredClone(preEncryption);
+        }
+        if (encryption) {
+          encryption.iv = base64ToUint8Array(encryption.iv);
+          encryption.key = base64ToUint8Array(encryption.key);
+        }
+
+        const dataType = encryption
+          ? 'file'
+          : isMultiFileZip
+            ? 'zip'
+            : resource?.base64 || resource?.data64 || resourceEncrypt
+              ? 'base64'
+              : 'file';
        const response = await publishData({
           apiVersion: 2,
           category,
@@ -1347,6 +1511,7 @@ export const publishMultipleQDNResources = async (data: any, sender, isFromExten
           uploadType: dataType,
           withFee: true,
           appInfo,
+          encryption: encryption || null,
         });
         if (response?.signature) {
           publishedResponses.push(response);
@@ -1383,7 +1548,7 @@ export const publishMultipleQDNResources = async (data: any, sender, isFromExten
    };
    return obj;
   }
-  if(hasAppFee && checkbox1){
+  if(hasAppFee && checkbox1Var){
     sendCoinFunc({
      amount: appFee,
      receiver: appFeeRecipient
@@ -1696,7 +1861,7 @@ if (accepted || skip) {
   }
 };
 
-export const joinGroup = async (data, isFromExtension) => {
+export const joinGroup = async (data, isFromExtension, appInfo) => {
   const requiredFields = ["groupId"];
   const missingFields: string[] = [];
   requiredFields.forEach((field) => {
@@ -1721,15 +1886,30 @@ export const joinGroup = async (data, isFromExtension) => {
     throw new Error(errorMsg);
   }
   const fee = await getFee("JOIN_GROUP");
+  const hasPermission =
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'JOIN_GROUP');
 
-  const resPermission = await getUserPermission({
+   let acceptVar = hasPermission || false;
+
+  if (!hasPermission) {
+   const resPermission = await getUserPermission({
     text1: "Confirm joining the group:",
     highlightedText: `${groupInfo.groupName}`,
     fee: fee.fee,
   }, isFromExtension);
-  const { accepted } = resPermission;
 
-  if (accepted) {
+     const { accepted } = resPermission || {
+      accepted: false,
+    };
+    if (accepted) {
+      acceptVar = accepted;
+    }
+
+}
+
+  if (acceptVar) {
     const groupId = data.groupId;
 
     if (!groupInfo || groupInfo.error) {
@@ -1750,6 +1930,7 @@ export const joinGroup = async (data, isFromExtension) => {
 export const saveFile = async (data, sender, isFromExtension) => {
   try {
     if (!data?.filename) throw new Error('Missing filename');
+    if(data?.encryption) throw new Error('Cannot save encrypted file, please use Qortal Hub')
     if (data?.location) {
       const requiredFieldsLocation = ['service', 'name'];
       const missingFieldsLocation: string[] = [];
@@ -1919,6 +2100,14 @@ export const getUserWallet = async (data, isFromExtension, appInfo) => {
   if (value) {
     skip = true;
   }
+   if (
+    !skip &&
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'GET_USER_WALLET')
+  ) {
+    skip = true;
+  }
 
   let resPermission;
 
@@ -2032,6 +2221,15 @@ export const getWalletBalance = async (data, bypassPermission?: boolean, isFromE
   const value = (await getPermission(`qAPPAutoWalletBalance-${appInfo?.name}-${data.coin}`)) || false;
   let skip = false;
   if (value) {
+    skip = true;
+  }
+
+    if (
+    !skip &&
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'GET_WALLET_BALANCE')
+  ) {
     skip = true;
   }
   let resPermission
@@ -2244,6 +2442,14 @@ let skip = false;
 if (value) {
   skip = true;
 }
+  if (
+    !skip &&
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'GET_USER_WALLET_INFO')
+  ) {
+    skip = true;
+  }
   let resPermission;
 
   if (!skip) {
@@ -2432,7 +2638,7 @@ export const getTxActivitySummary = async (data) => {
     return fee.toFixed(0);
   }
 
-  export const updateForeignFee = async (data, isFromExtension) => {
+  export const updateForeignFee = async (data, isFromExtension, appInfo) => {
     const isGateway = await isRunningGateway();
     if (isGateway) {
       throw new Error("This action cannot be done through a public node");
@@ -2460,7 +2666,15 @@ export const getTxActivitySummary = async (data) => {
     type === 'feerequired'
       ? `*The ${value} sats fee is derived from ${calculateRateFromFee(value, 300)} sats per kb, for a transaction that is approximately 300 bytes in size.`
       : '';
-    const resPermission = await getUserPermission(
+
+      const hasPermission =
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'UPDATE_FOREIGN_FEE');
+
+ let acceptVar = hasPermission || false;
+  if (!hasPermission) {
+     const resPermission = await getUserPermission(
       {
         text1: `Do you give this application permission to update foreign fees on your node?`,
         text2: `type: ${type === 'feerequired' ? 'unlocking' : 'locking'}`,
@@ -2470,9 +2684,16 @@ export const getTxActivitySummary = async (data) => {
       },
       isFromExtension
     );
-  
-    const { accepted } = resPermission;
-    if (!accepted) {
+      const { accepted } = resPermission || {
+      accepted: false,
+    };
+    if (accepted) {
+      acceptVar = accepted;
+    }
+  }
+    
+
+    if (!acceptVar) {
       throw new Error('User declined request');
     }
     const url = `/crosschain/${coin.toLowerCase()}/update${type}`;
@@ -2552,7 +2773,7 @@ export const getTxActivitySummary = async (data) => {
     }
   };
 
-  export const setCurrentForeignServer = async (data, isFromExtension) => {
+  export const setCurrentForeignServer = async (data, isFromExtension, appInfo) => {
     const isGateway = await isRunningGateway();
     if (isGateway) {
       throw new Error("This action cannot be done through a public node");
@@ -2574,8 +2795,18 @@ export const getTxActivitySummary = async (data) => {
     }
   
     const { coin, host, port, type } = data;
+  const hasPermission =
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(
+      appInfo.tabId,
+      appInfo.name,
+      'SET_CURRENT_FOREIGN_SERVER'
+    );
 
-    const resPermission = await getUserPermission(
+ let acceptVar = hasPermission || false;
+  if (!hasPermission) {
+     const resPermission = await getUserPermission(
       {
         text1: `Do you give this application permission to set the current server?`,
         text2: `type: ${type}`,
@@ -2584,9 +2815,16 @@ export const getTxActivitySummary = async (data) => {
       },
       isFromExtension
     );
-  
-    const { accepted } = resPermission;
-    if (!accepted) {
+
+    const { accepted } = resPermission || {
+      accepted: false,
+    };
+    if (accepted) {
+      acceptVar = accepted;
+    }
+  }
+   
+    if (!acceptVar) {
       throw new Error('User declined request');
     }
 
@@ -2628,7 +2866,7 @@ export const getTxActivitySummary = async (data) => {
   };
   
 
-  export const addForeignServer = async (data, isFromExtension) => {
+  export const addForeignServer = async (data, isFromExtension, appInfo) => {
     const isGateway = await isRunningGateway();
     if (isGateway) {
       throw new Error("This action cannot be done through a public node");
@@ -2651,7 +2889,14 @@ export const getTxActivitySummary = async (data) => {
   
     const { coin, host, port, type } = data;
 
-    const resPermission = await getUserPermission(
+      const hasPermission =
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'ADD_FOREIGN_SERVER');
+
+    let acceptVar = hasPermission || false;
+  if (!hasPermission) {
+     const resPermission = await getUserPermission(
       {
         text1: `Do you give this application permission to add a server?`,
         text2: `type: ${type}`,
@@ -2660,9 +2905,15 @@ export const getTxActivitySummary = async (data) => {
       },
       isFromExtension
     );
-  
-    const { accepted } = resPermission;
-    if (!accepted) {
+
+     const { accepted } = resPermission || {
+      accepted: false,
+    };
+    if (accepted) {
+      acceptVar = accepted;
+    }
+  }
+    if (!acceptVar) {
       throw new Error('User declined request');
     }
 
@@ -2703,7 +2954,7 @@ export const getTxActivitySummary = async (data) => {
 
   };
   
-  export const removeForeignServer = async (data, isFromExtension) => {
+  export const removeForeignServer = async (data, isFromExtension, appInfo) => {
     const isGateway = await isRunningGateway();
     if (isGateway) {
       throw new Error("This action cannot be done through a public node");
@@ -2725,8 +2976,14 @@ export const getTxActivitySummary = async (data) => {
     }
   
     const { coin, host, port, type } = data;
+  const hasPermission =
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'REMOVE_FOREIGN_SERVER');
 
-    const resPermission = await getUserPermission(
+ let acceptVar = hasPermission || false;
+  if (!hasPermission) {
+     const resPermission = await getUserPermission(
       {
         text1: `Do you give this application permission to remove a server?`,
         text2: `type: ${type}`,
@@ -2735,9 +2992,17 @@ export const getTxActivitySummary = async (data) => {
       },
       isFromExtension
     );
-  
-    const { accepted } = resPermission;
-    if (!accepted) {
+
+    const { accepted } = resPermission || {
+      accepted: false,
+    };
+    if (accepted) {
+      acceptVar = accepted;
+    }
+  }
+     
+
+    if (!acceptVar) {
       throw new Error('User declined request');
     }
 
@@ -3843,6 +4108,18 @@ export const decryptQortalGroupData = async (data, sender) => {
   if(!refreshCache && groupSecretkeys[groupId] && groupSecretkeys[groupId].secretKeyObject && groupSecretkeys[groupId]?.timestamp && (Date.now() - groupSecretkeys[groupId]?.timestamp) <  1200000){
     secretKeyObject = groupSecretkeys[groupId].secretKeyObject
   }
+   if (secretKeyObject) {
+      const decodeForNumber = atob(data64);
+
+      // Extract the key (assuming it's always the first 10 characters)
+      const keyStr = decodeForNumber.slice(0, 10);
+
+      // Convert the key string back to a number
+      const highestKey = parseInt(keyStr, 10);
+      if (!secretKeyObject[highestKey]) {
+        secretKeyObject = null;
+      }
+    }
   if(!secretKeyObject){
     const { names } =
     await getGroupAdmins(groupId)
@@ -4772,6 +5049,20 @@ let skip = false;
 if (value) {
   skip = true;
 }
+
+  if (
+    !skip &&
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(
+      appInfo.tabId,
+      appInfo.name,
+      'GET_USER_WALLET_TRANSACTIONS'
+    )
+  ) {
+    skip = true;
+  }
+
   let resPermission;
 
   if (!skip) {
@@ -5496,15 +5787,30 @@ export const transferAssetRequest = async (data, isFromExtension) => {
   return res
 }
 
-export const signForeignFees = async (data, isFromExtension) => {
+export const signForeignFees = async (data, appInfo, isFromExtension) => {
+   let skip = false;
+  let acceptedVar = false;
+  if (
+    !skip &&
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'SIGN_FOREIGN_FEES')
+  ) {
+    skip = true;
+  }
+  let resPermission;
+  if (!skip) {
   const resPermission = await getUserPermission(
     {
       text1: `Do you give this application permission to sign the required fees for all your trade offers?`,
     },
     isFromExtension
   );
+
   const { accepted } = resPermission;
-  if (accepted) {
+    acceptedVar = accepted;
+}
+  if (acceptedVar || skip) {
     const wallet = await getSaveWallet();
     const address = wallet.address0;
     const resKeyPair = await getKeyPair();
@@ -5558,5 +5864,242 @@ export const signForeignFees = async (data, isFromExtension) => {
     return true;
   } else {
     throw new Error('User declined request');
+  }
+};
+
+
+
+export const sessionPermissions = async (data, isFromExtension, appInfo) => {
+  try {
+    const { permissions = [] } = data;
+
+    if (!appInfo?.tabId) {
+      throw new Error('tabId is required from appInfo');
+    }
+
+    if (!appInfo?.name) {
+      throw new Error('App name is required');
+    }
+
+    if (!Array.isArray(permissions) || permissions.length === 0) {
+      throw new Error('permissions array is required and must not be empty');
+    }
+
+    const tabId = appInfo.tabId;
+
+    // Validate all permissions are valid
+    const invalidPermissions = permissions.filter(
+      (permission) => !VALID_SESSION_PERMISSIONS.includes(permission)
+    );
+
+    if (invalidPermissions.length > 0) {
+      throw new Error(
+        `Invalid permissions: ${invalidPermissions.join(', ')}. Valid permissions are: ${VALID_SESSION_PERMISSIONS.join(', ')}`
+      );
+    }
+
+    // Show permission modal with the list of permissions
+    const permissionsListHtml = permissions
+      .map(
+        (permission) => `
+      <div style="
+        background-color: var(--background-paper);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 8px 12px;
+        margin: 4px 0;
+        font-family: monospace;
+        font-size: 14px;
+        color: var(--text-primary);
+      ">
+        ${permission}
+      </div>
+    `
+      )
+      .join('');
+
+    const resPermission = await getUserPermission(
+      {
+        text1: `${appInfo.name} is requesting session permissions`,
+        text2:  'The following permissions will be automatically granted for this session:',
+        html: `
+  <div style="
+    max-height: 40vh;
+    overflow-y: auto;
+    font-family: sans-serif;
+    padding: 10px;
+    background-color: var(--background-default);
+    border-radius: 8px;
+  ">
+    ${permissionsListHtml}
+  </div>
+`,
+        confirmCheckbox: true,
+        confirmCheckboxLabel:
+          'I trust this app and understand these permissions will auto-execute',
+        isSessionPermission: true,
+      },
+      isFromExtension
+    );
+
+    const { accepted = false } = resPermission || {};
+ 
+    if (!accepted) {
+      throw new Error(
+      'User has rejected the session permissions'
+      );
+    }
+
+    if (accepted) {
+      setSessionPermissions(
+        tabId,
+        appInfo.name,
+        permissions
+      );
+      return true
+    } else {
+     throw new Error('User declined request');
+    }
+  } catch (error) {
+    throw new Error(error?.message || 'Failed to set session permissions');
+  }
+};
+
+
+const lastReEncryptionTime = new Map<number, number>();
+const RE_ENCRYPTION_COOLDOWN_MS = 150000; // 2.5 minutes in milliseconds
+
+export const reEncryptQortalKeys = async (data, isFromExtension, appInfo) => {
+  const requiredFields = ['groupId'];
+ const missingFields: string[] = [];
+  requiredFields.forEach((field) => {
+    if (!data[field]) {
+      missingFields.push(field);
+    }
+  });
+  if (missingFields.length > 0) {
+    const missingFieldsString = missingFields.join(", ");
+    const errorMsg = `Missing fields: ${missingFieldsString}`;
+    throw new Error(errorMsg);
+  }
+
+  // Check if re-encryption was done recently for this groupId
+  const groupId = data.groupId;
+  const lastTime = lastReEncryptionTime.get(groupId);
+  const currentTime = Date.now();
+
+  if (lastTime && currentTime - lastTime < RE_ENCRYPTION_COOLDOWN_MS) {
+    const remainingTime = Math.ceil(
+      (RE_ENCRYPTION_COOLDOWN_MS - (currentTime - lastTime)) / 1000
+    );
+    throw new Error(
+      `Re-encryption cooldown in effect. Please wait ${remainingTime} seconds before re-encrypting keys for this group again.`
+    );
+  }
+
+  const urlGroupInfo = await createEndpoint(`/groups/${data?.groupId}`);
+  const response = await fetch(urlGroupInfo);
+  if (!response.ok)
+    throw new Error(
+      'Unable to fetch group info'
+    );
+
+  const groupInfo = await response.json();
+  const wallet = await getSaveWallet();
+  const address = wallet.address0;
+  if (groupInfo?.owner !== address) {
+    throw new Error('Only the group owner can perform this request');
+  }
+  let skip = false;
+  let acceptedVar = false;
+  if (
+    !skip &&
+    appInfo?.tabId &&
+    appInfo?.name &&
+    hasSessionPermission(appInfo.tabId, appInfo.name, 'REENCRYPT_GROUP_KEYS')
+  ) {
+    skip = true;
+  }
+  let resPermission;
+  if (!skip) {
+    const groupName = groupInfo?.groupName;
+    resPermission = await getUserPermission(
+      {
+        text1:
+          'Do you give this application permission to re-encrypt group keys?',
+        highlightedText: `Group: ${groupName}`,
+      },
+      isFromExtension
+    );
+    const { accepted } = resPermission;
+
+    acceptedVar = accepted;
+  }
+  if (acceptedVar || skip) {
+    const groupId = data.groupId;
+    const addKey = data?.addKey || false;
+
+    const { names } = await getGroupAdmins(groupId);
+
+    const publish = await getPublishesFromAdmins(names, groupId);
+    if (publish === false) {
+      // create new key
+
+      await encryptAndPublishSymmetricKeyGroupChat({
+        groupId,
+        previousData: null,
+        addKey: true,
+      });
+
+      sendChatGroup({
+        groupId,
+        typeMessage: undefined,
+        chatReference: undefined,
+        messageText: PUBLIC_NOTIFICATION_CODE_FIRST_SECRET_KEY,
+      });
+
+      // Update last re-encryption timestamp
+      lastReEncryptionTime.set(groupId, Date.now());
+      return true;
+    }
+
+    const url = await createEndpoint(
+      `/arbitrary/DOCUMENT_PRIVATE/${publish.name}/${
+        publish.identifier
+      }?encoding=base64&rebuild=true`
+    );
+
+    const res = await fetch(url);
+    const resData = await res.text();
+
+    const decryptedKey: any = await decryptGroupEncryption({data: resData})
+
+    const dataint8Array = base64ToUint8Array(decryptedKey.data);
+    const decryptedKeyToObject = uint8ArrayToObject(dataint8Array);
+    if (!validateSecretKey(decryptedKeyToObject))
+      throw new Error(
+        'Invalid secret key object'
+      );
+    const { data: responseData, numberOfMembers } =
+      await encryptAndPublishSymmetricKeyGroupChat({
+        groupId,
+        previousData: decryptedKeyToObject,
+        addKey: addKey,
+      });
+
+    sendChatNotification(
+      responseData,
+      groupId,
+      decryptedKeyToObject,
+      numberOfMembers
+    );
+
+    // Update last re-encryption timestamp
+    lastReEncryptionTime.set(groupId, Date.now());
+    return true;
+  } else {
+    throw new Error(
+      'User declined request'
+    );
   }
 };

@@ -7,6 +7,8 @@ import { extractComponents } from '../Chat/MessageDisplay';
 import { isRunningGateway } from '../../qortalRequests';
 import { MAX_SIZE_PUBLIC_NODE, MAX_SIZE_PUBLISH } from '../../constants/constants';
 import { createEndpoint } from '../../background';
+import { encryptAesCtrChunkWithFallback } from '../../qdn/publish/pubish';
+import { base64ToUint8Array } from '../../qdn/encryption/group-encryption';
 
 
 
@@ -304,7 +306,7 @@ async function handleGetFileFromIndexedDB(fileId, sendResponse) {
     }
   }
   
-  async function handleSendDataChunksToCore(fileId, chunkUrl, sendResponse, appInfo, resourceInfo){
+  async function handleSendDataChunksToCore(fileId, chunkUrl, sendResponse, appInfo, resourceInfo, encryption){
     try {
       if(!fileReferences[fileId]) throw new Error('No file reference found')
         const chunkSize = 5 * 1024 * 1024; // 5MB
@@ -324,14 +326,42 @@ async function handleGetFileFromIndexedDB(fileId, sendResponse) {
         filename:
           resourceInfo?.filename
               })
-      for (let index = 0; index < totalChunks; index++) {
-        const start = index * chunkSize;
-        const end = Math.min(start + chunkSize, file.size);
-        const chunk = file.slice(start, end);
-  
-        const formData = new FormData();
-        formData.append('chunk', chunk, file.name); // Optional: include filename
-        formData.append('index', index);
+    const keyBytes = encryption?.key || null;
+    const ivBytes = encryption?.iv || null;
+
+              let bytesProcessed = 0;
+    for (let index = 0; index < totalChunks; index++) {
+      const start = index * chunkSize;
+      const end = Math.min(start + chunkSize, file.size);
+       const rawChunkBlob = file.slice(start, end);
+
+      let chunkToUpload;
+
+      if (encryption == null) {
+        // NO ENCRYPTION —
+        chunkToUpload = rawChunkBlob;
+      } else {
+
+        //  ENCRYPTION ENABLED — AES-CTR encrypt this chunk
+        const rawBytes = new Uint8Array(await rawChunkBlob.arrayBuffer());
+
+        const blockOffset = BigInt(bytesProcessed >> 4);
+
+        const encryptedBytes = await encryptAesCtrChunkWithFallback(
+          base64ToUint8Array(keyBytes),
+          base64ToUint8Array(ivBytes),
+          blockOffset,
+          rawBytes
+        );
+
+        chunkToUpload = new Blob([encryptedBytes]);
+        bytesProcessed += rawBytes.length;
+      }
+
+      // Upload the (encrypted or raw) chunk
+      const formData = new FormData();
+      formData.append('chunk', chunkToUpload, file.name);
+      formData.append('index', index);
   
         await uploadChunkWithRetry(chunkUrl, formData, index);
         executeEvent('receiveChunks', {
@@ -384,7 +414,8 @@ const UIQortalRequests = [
 'CANCEL_SELL_NAME',
 'BUY_NAME',   'MULTI_ASSET_PAYMENT_WITH_PRIVATE_DATA',
 'TRANSFER_ASSET',
-'SIGN_FOREIGN_FEES',  'GET_PRIMARY_NAME',
+'SIGN_FOREIGN_FEES',  'GET_PRIMARY_NAME',   'SESSION_PERMISSIONS',
+  'WHICH_UI',  'REENCRYPT_GROUP_KEYS',
 ];
 
 
@@ -637,6 +668,39 @@ isDOMContentLoaded: false
       
      
   
+  };
+
+   const lockTab = async (data, appInfo) => {
+    const requiredFields = ['lockMessage'];
+  
+  requiredFields.forEach((field) => {
+        if (data[field] === undefined || data[field] === null) {
+            throw new Error(`Missing required field: ${field}`);
+        }
+    });
+  
+    const { lockMessage } = data;
+    const tabId = appInfo?.tabId;
+  
+    if (!tabId) {
+      throw new Error('Tab ID not found');
+    }
+  
+  
+  
+    executeEvent('addLock', { data: { tabId, lockMessage } });
+    return true;
+  };
+  
+   const unlockTab = async (appInfo) => {
+    const tabId = appInfo?.tabId;
+  
+    if (!tabId) {
+      throw new Error('Tab ID not found');
+    }
+  
+    executeEvent('removeLock', { data: { tabId } });
+    return true;
   };
 
 
@@ -906,6 +970,39 @@ isDOMContentLoaded: false
         });
        }
         
+      } else if(event?.data?.action === 'LOCK_TAB'){
+       try {
+        await lockTab(event?.data,  {
+            name: appName, service: appService,  tabId
+          })
+        event.ports[0].postMessage({
+          result: true,
+          error: null,
+        });
+       } catch (error) {
+        console.log('error', error)
+        event.ports[0].postMessage({
+          result: null,
+          error: error?.message,
+        });
+       }
+        
+      } else if(event?.data?.action === 'UNLOCK_TAB'){
+       try {
+        await unlockTab({
+            name: appName, service: appService,  tabId
+          })
+        event.ports[0].postMessage({
+          result: true,
+          error: null,
+        });
+       } catch (error) {
+        event.ports[0].postMessage({
+          result: null,
+          error: error?.message,
+        });
+       }
+        
       } else if(event?.data?.action === 'CREATE_AND_COPY_EMBED_LINK'){
         try {
          const link = await createAndCopyEmbedLink(event?.data)
@@ -962,8 +1059,7 @@ isDOMContentLoaded: false
         handleGetFileFromIndexedDB(message.fileId, sendResponse);
         return true; // Keep channel open for async
       } else if (message.action === 'sendDataChunksToCore') {
-        console.log('message', message)
-        handleSendDataChunksToCore(message.fileId, message.chunkUrl, sendResponse, message?.appInfo, message?.resourceInfo);
+        handleSendDataChunksToCore(message.fileId, message.chunkUrl, sendResponse, message?.appInfo, message?.resourceInfo, message?.encryption);
         return true; // Keep channel open for async
       } else if (message.action === 'getFileBase64') {
         handleGetFileBase64(message.fileId, sendResponse);

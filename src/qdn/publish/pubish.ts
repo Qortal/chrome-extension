@@ -9,6 +9,58 @@ import { sendDataChunksToCore } from '../../qortalRequests/get';
 import { executeEvent } from '../../utils/events';
 import { fileToBase64 } from '../../utils/fileReading';
 
+
+export async function encryptAesCtrChunkWithFallback(
+  keyBytes,
+  ivBytes,
+  blockOffset,
+  plaintext
+) {
+  // Try WebCrypto first
+ 
+    try {
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        keyBytes,
+        { name: 'AES-CTR' },
+        false,
+        ['encrypt']
+      );
+
+      const counter = deriveCtrCounter(ivBytes, blockOffset);
+
+      const encrypted = await crypto.subtle.encrypt(
+        {
+          name: 'AES-CTR',
+          counter,
+          length: 128,
+        },
+        cryptoKey,
+        plaintext
+      );
+
+      return new Uint8Array(encrypted);
+    } catch (e) {
+      console.warn('WebCrypto AES-CTR failed, falling back:', e);
+    }
+  
+
+}
+
+function deriveCtrCounter(iv, blockOffset) {
+  const counter = new Uint8Array(iv);
+  let carry = blockOffset;
+
+  for (let i = 15; i >= 0 && carry > 0n; i--) {
+    const sum = BigInt(counter[i]) + (carry & 0xffn);
+    counter[i] = Number(sum & 0xffn);
+    carry = (carry >> 8n) + (sum >> 8n);
+  }
+  return counter;
+}
+
+
+
 export async function reusableGet(endpoint) {
   const validApi = await getBaseApi();
 
@@ -140,6 +192,7 @@ export const publishData = async ({
   feeAmount,
   sender,
   appInfo,
+  encryption
 }: any) => {
   const validateName = async (receiverName: string) => {
     return await reusableGet(`/names/${receiverName}`);
@@ -441,14 +494,17 @@ export const publishData = async ({
     const chunkUrl = uploadDataUrl + `/chunk`;
 	const createdChunkUrl = await createEndpoint(chunkUrl)
   if(sender){
+  
     await sendDataChunksToCore(file, createdChunkUrl, sender, appInfo, {
       name: registeredName,
           identifier,
           service,
           filename: file?.name || filename || title || `${service}-${identifier || ''}`
-    })
+    }, encryption)
 
   } else {
+
+  
     const chunkSize = 5 * 1024 * 1024; // 5MB
 
     const totalChunks = Math.ceil(file.size / chunkSize);
@@ -471,12 +527,40 @@ export const publishData = async ({
               } },
           });
     }
+    let bytesProcessed = 0;
+      const keyBytes = encryption?.key || null;
+    const ivBytes = encryption?.iv || null;
+
     for (let index = 0; index < totalChunks; index++) {
       const start = index * chunkSize;
       const end = Math.min(start + chunkSize, file.size);
-      const chunk = file.slice(start, end);
+       const rawChunkBlob = file.slice(start, end);
+
+      let chunkToUpload;
+
+      if (encryption == null) {
+        // NO ENCRYPTION —
+        chunkToUpload = rawChunkBlob;
+      } else {
+        //  ENCRYPTION ENABLED — AES-CTR encrypt this chunk
+        const rawBytes = new Uint8Array(await rawChunkBlob.arrayBuffer());
+
+        const blockOffset = BigInt(bytesProcessed >> 4);
+
+        const encryptedBytes = await encryptAesCtrChunkWithFallback(
+          keyBytes,
+          ivBytes,
+          blockOffset,
+          rawBytes
+        );
+
+        chunkToUpload = new Blob([encryptedBytes]);
+        bytesProcessed += rawBytes.length;
+      }
+
+      // Upload the (encrypted or raw) chunk
       const formData = new FormData();
-      formData.append('chunk', chunk, file.name); // Optional: include filename
+      formData.append('chunk', chunkToUpload, file.name);
       formData.append('index', index);
 
       await uploadChunkWithRetry(chunkUrl, formData, index);

@@ -1886,7 +1886,7 @@ export async function getEnteredQmailTimestampFunc() {
   
 }
 
-async function sendChatGroup({
+export async function sendChatGroup({
   groupId,
   typeMessage,
   chatReference,
@@ -2351,7 +2351,7 @@ export async function createBuyOrderTxQortalRequest({ crosschainAtInfo, isGatewa
   }
 }
 
-async function sendChatNotification(
+export async function sendChatNotification(
   res,
   groupId,
   secretKeyObject,
@@ -4610,12 +4610,11 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
 
         break;
       case "encryptAndPublishSymmetricKeyGroupChat": {
-        const { groupId, previousData, previousNumber } = request.payload;
+        const { groupId, previousData } = request.payload;
 
         encryptAndPublishSymmetricKeyGroupChat({
           groupId,
-          previousData,
-          previousNumber,
+          previousData
         })
           .then(({ data, numberOfMembers }) => {
             sendResponse(data);

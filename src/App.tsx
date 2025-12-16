@@ -27,6 +27,7 @@ import {
   Popover,
   Tooltip,
   Typography,
+
 } from "@mui/material";
 import { decryptStoredWallet } from "./utils/decryptWallet";
 import PersonSearchIcon from '@mui/icons-material/PersonSearch';
@@ -304,7 +305,6 @@ export const isMainWindow = window?.location?.href?.includes("?main=true");
 function App() {
   const [extState, setExtstate] = useState<extStates>("not-authenticated");
   const [desktopViewMode, setDesktopViewMode] = useState('home')
-
   const [backupjson, setBackupjson] = useState<any>(null);
   const [rawWallet, setRawWallet] = useState<any>(null);
   const [ltcBalanceLoading, setLtcBalanceLoading] = useState<boolean>(false);
@@ -3262,6 +3262,7 @@ function App() {
           open={isShowQortalRequestExtension}
           aria-labelledby="alert-dialog-title"
           aria-describedby="alert-dialog-description"
+         
         >
           <CountdownCircleTimer
             isPlaying
@@ -3515,7 +3516,7 @@ function App() {
               label={
                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
                   <Typography sx={{ fontSize: "14px" }}>
-                    I have read this request
+                    {messageQortalRequestExtension?.confirmCheckboxLabel || 'I have read this request'}
                   </Typography>
                   <PriorityHighIcon color="warning" />
                 </Box>

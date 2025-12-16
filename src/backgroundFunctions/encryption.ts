@@ -173,18 +173,22 @@ export const encryptAndPublishSymmetricKeyGroupChatForAdmins = async ({groupId, 
   }
 }
 
-export const encryptAndPublishSymmetricKeyGroupChat = async ({groupId, previousData}: {
+export const encryptAndPublishSymmetricKeyGroupChat = async ({groupId, previousData, addKey = true}: {
     groupId: number,
-    previousData: Object,
+    previousData: Object | null,
+    addKey?: boolean
 }) => {
     try {
-      
+        let shouldAddKey = addKey || false;
         let highestKey = 0
         if(previousData){
            highestKey = Math.max(...Object.keys((previousData || {})).filter(item=> !isNaN(+item)).map(Number));
     
         }
        
+         if (!previousData) {
+          shouldAddKey = true;
+         } 
         const resKeyPair = await getKeyPair()
         const parsedData = JSON.parse(resKeyPair)
         const privateKey = parsedData.privateKey
@@ -192,10 +196,10 @@ export const encryptAndPublishSymmetricKeyGroupChat = async ({groupId, previousD
         const groupmemberPublicKeys = await getPublicKeys(groupId)
         const symmetricKey = createSymmetricKeyAndNonce()
         const nextNumber = highestKey + 1
-        const objectToSave = {
-            ...previousData,
+        const objectToSave = shouldAddKey ? {
+            ...(previousData || {}),
             [nextNumber]: symmetricKey
-        }
+        } : previousData
     
         const symmetricKeyAndNonceBase64 = await objectToBase64(objectToSave)
         

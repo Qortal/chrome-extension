@@ -102,7 +102,7 @@ export const AppViewer = React.forwardRef(({ app , hide, isDevMode, skipAuth}, i
 
     const receiveChunksFunc = useCallback(
       (e) => {
-        console.log('eee', e)
+    
         const iframe = iframeRef?.current;
         if (!iframe || !iframe?.src) return;
         if (app?.tabId !== e.detail?.tabId) return;
@@ -127,7 +127,7 @@ export const AppViewer = React.forwardRef(({ app , hide, isDevMode, skipAuth}, i
             dataToBeSent.filename = filename;
           }
           const targetOrigin = iframeRef.current ? new URL(iframeRef.current.src).origin : "*"; 
-          console.log('targetOrigin', targetOrigin)
+     
           iframeRef.current?.contentWindow?.postMessage(
             {
               action: 'PUBLISH_STATUS',

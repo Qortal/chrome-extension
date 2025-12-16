@@ -36,6 +36,7 @@
     "@tiptap/starter-kit": "^2.5.9",
     "@types/chrome": "^0.0.263",
     "asmcrypto.js": "2.3.2",
+     "aes-js": "^3.1.2",
     "bcryptjs": "2.4.3",
     "buffer": "6.0.3",
     "compressorjs": "^1.2.1",
