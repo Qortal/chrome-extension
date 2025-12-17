@@ -31,7 +31,7 @@ export const HomeDesktop = ({
   const [checked1, setChecked1] = React.useState(false);
   const [checked2, setChecked2] = React.useState(false);
   React.useEffect(() => {
-      if (balance && +balance >= 6) {
+      if (balance && +balance >= 4.5) {
         setChecked1(true);
       }
     }, [balance]);

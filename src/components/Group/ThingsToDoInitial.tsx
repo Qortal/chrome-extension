@@ -25,7 +25,7 @@ export const ThingsToDoInitial = ({ myAddress, name, hasGroups, balance, userInf
 
 
   React.useEffect(() => {
-    if (balance && +balance >= 6) {
+    if (balance && +balance >= 4.5) {
       setChecked1(true);
     }
   }, [balance]);
@@ -118,7 +118,7 @@ if(!isLoaded) return null
                      fontWeight: 400,
                    },
                  }}
-                 primary={`Have at least 6 QORT in your wallet`}
+                 primary={`Have at least 4.50 QORT in your wallet`}
                />
                <ListItemIcon
                  sx={{
