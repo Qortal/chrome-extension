@@ -6103,3 +6103,7 @@ export const reEncryptQortalKeys = async (data, isFromExtension, appInfo) => {
     );
   }
 };
+
+export const playEncryptedMedia = async (data,  isFromExtension, appInfo)=> {
+  throw new Error('PLAY_ENCRYPTED_MEDIA not available in Extension')
+}

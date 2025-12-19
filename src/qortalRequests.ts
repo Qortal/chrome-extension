@@ -1,5 +1,5 @@
 import { banFromGroup, gateways, getApiKeyFromStorage, getNameInfoForOthers } from "./background";
-import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banFromGroupRequest, buyNameRequest, cancelGroupBanRequest, cancelGroupInviteRequest, cancelSellNameRequest, cancelSellOrder, createBuyOrder, createGroupRequest, createPoll, createSellOrder, decryptAESGCMRequest, decryptData, decryptDataWithSharingKey, decryptQortalGroupData, deleteHostedData, deleteListItems, deployAt, encryptData, encryptDataWithSharingKey, encryptQortalGroupData, getArrrSyncStatus, getCrossChainServerInfo, getDaySummary, getForeignFee, getHostedData, getListItems, getNodeInfo, getNodeStatus, getServerConnectionHistory, getTxActivitySummary, getUserAccount, getUserWallet, getUserWalletInfo, getUserWalletTransactions, getWalletBalance, inviteToGroupRequest, joinGroup, kickFromGroupRequest, leaveGroupRequest,  multiPaymentWithPrivateData, publishMultipleQDNResources, publishQDNResource, reEncryptQortalKeys, registerNameRequest, removeForeignServer, removeGroupAdminRequest, saveFile, sellNameRequest, sendChatMessage, sendCoin, sessionPermissions, setCurrentForeignServer, showPdfReader, signForeignFees, signTransaction, transferAssetRequest,  updateForeignFee, updateGroupRequest, updateNameRequest, voteOnPoll } from "./qortalRequests/get";
+import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banFromGroupRequest, buyNameRequest, cancelGroupBanRequest, cancelGroupInviteRequest, cancelSellNameRequest, cancelSellOrder, createBuyOrder, createGroupRequest, createPoll, createSellOrder, decryptAESGCMRequest, decryptData, decryptDataWithSharingKey, decryptQortalGroupData, deleteHostedData, deleteListItems, deployAt, encryptData, encryptDataWithSharingKey, encryptQortalGroupData, getArrrSyncStatus, getCrossChainServerInfo, getDaySummary, getForeignFee, getHostedData, getListItems, getNodeInfo, getNodeStatus, getServerConnectionHistory, getTxActivitySummary, getUserAccount, getUserWallet, getUserWalletInfo, getUserWalletTransactions, getWalletBalance, inviteToGroupRequest, joinGroup, kickFromGroupRequest, leaveGroupRequest,  multiPaymentWithPrivateData, playEncryptedMedia, publishMultipleQDNResources, publishQDNResource, reEncryptQortalKeys, registerNameRequest, removeForeignServer, removeGroupAdminRequest, saveFile, sellNameRequest, sendChatMessage, sendCoin, sessionPermissions, setCurrentForeignServer, showPdfReader, signForeignFees, signTransaction, transferAssetRequest,  updateForeignFee, updateGroupRequest, updateNameRequest, voteOnPoll } from "./qortalRequests/get";
 
  export const listOfAllQortalRequests = [
    'GET_USER_ACCOUNT',
@@ -95,6 +95,7 @@ import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banF
   'UNLOCK_TAB',
   'WHICH_UI',
    'REENCRYPT_GROUP_KEYS',
+   'PLAY_ENCRYPTED_MEDIA'
  ]
 
 // Promisify chrome.storage.local.get
@@ -1122,6 +1123,19 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
         const data = request.payload;
       
         reEncryptQortalKeys(data,  isFromExtension, appInfo)
+          .then((res) => {
+            sendResponse(res);
+          })
+          .catch((error) => {
+            sendResponse({ error: error.message });
+          });
+        break;
+      }
+
+      case "PLAY_ENCRYPTED_MEDIA": {
+        const data = request.payload;
+      
+        playEncryptedMedia(data,  isFromExtension, appInfo)
           .then((res) => {
             sendResponse(res);
           })

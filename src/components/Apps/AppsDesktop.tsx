@@ -554,7 +554,9 @@ export const AppsDesktop = ({ mode, setMode, show , myName, goToHome, setDesktop
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseTabDialogCancel} color="primary">
+          <Button onClick={handleCloseTabDialogCancel} sx={{
+            color: 'white'
+          }}>
             Cancel
           </Button>
           <Button
