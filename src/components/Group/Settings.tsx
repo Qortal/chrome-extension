@@ -82,7 +82,6 @@ export const Settings = ({
   setOpen,
 }) => {
   const [checked, setChecked] = React.useState(false);
-  const [generalChatEnabled, setGeneralChatEnabled] = useState(true);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setChecked(event.target.checked);
@@ -99,38 +98,7 @@ export const Settings = ({
     );
   };
 
-  const handleGeneralChatChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const nextEnabled = event.target.checked;
-    setGeneralChatEnabled(nextEnabled);
-    // Store as disable flag
-    new Promise((resolve, reject) => {
-      chrome?.runtime?.sendMessage(
-        {
-          action: "addUserSettings",
-          payload: {
-            keyValue: {
-              key: "disable-general-chat",
-              value: !nextEnabled,
-            },
-          },
-        },
-        (response) => {
-          if (!response?.error) {
-            resolve(response);
-            return;
-          }
-          reject(response.error);
-        }
-      );
-    }).catch((error) => {
-      console.error(
-        "Failed to add user settings:",
-        error?.message || error || "An error occurred"
-      );
-    });
-    // Notify the app to update visibility immediately
-    executeEvent('generalChatVisibilityChanged', { disabled: !nextEnabled });
-  };
+
 
   const handleClose = () => {
     setOpen(false);
@@ -161,35 +129,11 @@ export const Settings = ({
     }
   }, [setChecked]);
 
-  const getGeneralChatSetting = useCallback(async () => {
-    try {
-      return new Promise((res, rej) => {
-        chrome?.runtime?.sendMessage(
-          {
-            action: "getUserSettings",
-            payload: {
-              key: "disable-general-chat",
-            },
-          },
-          (response) => {
-            if (!response?.error) {
-              setGeneralChatEnabled(!(response || false));
-              res(response);
-              return;
-            }
-            rej(response.error);
-          }
-        );
-      });
-    } catch (error) {
-      console.log('error', error);
-    }
-  }, [setGeneralChatEnabled]);
+
 
   React.useEffect(() => {
     getUserSettings();
-    getGeneralChatSetting();
-  }, [getUserSettings, getGeneralChatSetting]);
+  }, [getUserSettings]);
 
  
 
@@ -234,20 +178,6 @@ export const Settings = ({
               onChange={handleChange} />}
             label="Disable all push notifications"
           />
-
-          <FormControlLabel
-            sx={{
-              color: 'white',
-            }}
-            control={
-              <LocalNodeSwitch
-                checked={generalChatEnabled}
-                onChange={handleGeneralChatChange}
-              />
-            }
-            label="General chat"
-          />
-
         </Box>
 
       </Dialog>
