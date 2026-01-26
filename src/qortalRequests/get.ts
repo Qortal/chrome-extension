@@ -4981,7 +4981,7 @@ export const decryptAESGCMRequest = async (data, isFromExtension) => {
 };
 
 export const createGroupRequest = async (data, isFromExtension) => {
-  const requiredFields = ["groupId", "qortalAddress", "groupName", "type", "approvalThreshold", "minBlock", "maxBlock"];
+  const requiredFields = ["groupName", "type", "approvalThreshold", "minBlock", "maxBlock"];
   const missingFields: string[] = [];
   requiredFields.forEach((field) => {
     if (data[field] !== undefined && data[field] !== null) {
