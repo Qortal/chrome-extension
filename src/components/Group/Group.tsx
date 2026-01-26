@@ -506,7 +506,6 @@ export const Group = ({
   const [isOpenSideViewDirects, setIsOpenSideViewDirects] = useState(false)
   const [isOpenSideViewGroups, setIsOpenSideViewGroups] = useState(false)
   const [isForceShowCreationKeyPopup, setIsForceShowCreationKeyPopup] = useState(false)
-  const [disableGeneralChat, setDisableGeneralChat] = useState(false);
   const setSelectedGroupId = useSetRecoilState(selectedGroupIdAtom)
 
   const [groupsProperties, setGroupsProperties] = useRecoilState(groupsPropertiesAtom)
@@ -582,35 +581,11 @@ export const Group = ({
     }
   }, []);
 
-  const getDisableGeneralChatSetting = useCallback(async () => {
-    try {
-      return new Promise((res, rej) => {
-        chrome?.runtime?.sendMessage(
-          {
-            action: "getUserSettings",
-            payload: {
-              key: "disable-general-chat",
-            },
-          },
-          (response) => {
-            if (!response?.error) {
-              setDisableGeneralChat(response || false);
-              res(response);
-              return;
-            }
-            rej(response.error);
-          }
-        );
-      });
-    } catch (error) {
-      console.error(error);
-    }
-  }, []);
+
 
   useEffect(() => {
     getUserSettings();
-    getDisableGeneralChatSetting();
-  }, [getUserSettings, getDisableGeneralChatSetting]);
+  }, [getUserSettings]);
 
   const getTimestampEnterChat = async () => {
     try {
@@ -758,7 +733,7 @@ export const Group = ({
   const groupChatHasUnread = useMemo(() => {
     let hasUnread = false;
     groups.forEach((group) => {
-      if (group?.groupId === '0' && disableGeneralChat) {
+      if (group?.groupId === '0') {
         return;
       }
       if (
@@ -778,7 +753,6 @@ export const Group = ({
     groups,
     myAddress,
     groupChatTimestamps,
-    disableGeneralChat,
   ]);
 
   const groupsAnnHasUnread = useMemo(() => {
@@ -1080,8 +1054,6 @@ export const Group = ({
         setGroups(sortArrayByTimestampAndGroupName(message.payload));
         getLatestRegularChat(message.payload)
         setMemberGroups(message.payload?.filter((item)=> item?.groupId !== '0'));
-        // Refresh general chat visibility preference when groups update
-        getDisableGeneralChatSetting();
 
         if (selectedGroupRef.current && groupSectionRef.current === "chat") {
           chrome?.runtime?.sendMessage({
@@ -2117,10 +2089,9 @@ export const Group = ({
 
   const visibleGroups = useMemo(
     () =>
-      disableGeneralChat
-        ? groups.filter((group) => group?.groupId !== "0")
-        : groups,
-    [disableGeneralChat, groups]
+     groups.filter((group) => group?.groupId !== "0")
+
+    [groups]
   );
 
   const renderGroups = () => {
@@ -2403,33 +2374,6 @@ export const Group = ({
       </div>
     );
   };
-
-  // Apply general chat visibility changes immediately without app reload
-  useEffect(() => {
-    const onGeneralChatVisibilityChanged = (e) => {
-      const disabled = !!e.detail?.disabled;
-      setDisableGeneralChat(disabled);
-      if (disabled && selectedGroupRef.current?.groupId === '0') {
-        const next = groups.find((g) => g.groupId !== '0');
-        if (next) {
-          selectGroup(next);
-        } else {
-          setSelectedGroup(null);
-        }
-      }
-    };
-
-    subscribeToEvent(
-      'generalChatVisibilityChanged',
-      onGeneralChatVisibilityChanged
-    );
-    return () => {
-      unsubscribeFromEvent(
-        'generalChatVisibilityChanged',
-        onGeneralChatVisibilityChanged
-      );
-    };
-  }, [groups, selectGroup]);
   
   return (
     <>
@@ -2970,9 +2914,7 @@ export const Group = ({
               balance={balance}
               userInfo={userInfo}
               groups={
-                disableGeneralChat
-                  ? groups.filter((g) => g.groupId !== '0')
-                  : groups
+              groups.filter((g) => g.groupId !== '0')
               }
               setGroupSection={setGroupSection}
               setSelectedGroup={setSelectedGroup}
@@ -3003,7 +2945,7 @@ export const Group = ({
   isLoadingGroups={isLoadingGroups}
   balance={balance}
   userInfo={userInfo}
-  groups={disableGeneralChat ? groups.filter((g) => g.groupId !== '0') : groups}
+  groups={groups.filter((g) => g.groupId !== '0')}
   setGroupSection={setGroupSection}
   setSelectedGroup={setSelectedGroup}
   getTimestampEnterChat={getTimestampEnterChat}
