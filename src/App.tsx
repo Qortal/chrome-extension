@@ -38,8 +38,6 @@ import Logo1Dark from "./assets/svgs/Logo1Dark.svg";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import Logo2 from "./assets/svgs/Logo2.svg";
 import Copy from "./assets/svgs/Copy.svg";
-import ltcLogo from "./assets/ltc.png";
-import qortLogo from "./assets/qort.png";
 import { CopyToClipboard } from "react-copy-to-clipboard";
 import Download from "./assets/svgs/Download.svg";
 import Logout from "./assets/svgs/Logout.svg";
@@ -307,16 +305,13 @@ function App() {
   const [desktopViewMode, setDesktopViewMode] = useState('home')
   const [backupjson, setBackupjson] = useState<any>(null);
   const [rawWallet, setRawWallet] = useState<any>(null);
-  const [ltcBalanceLoading, setLtcBalanceLoading] = useState<boolean>(false);
   const [qortBalanceLoading, setQortBalanceLoading] = useState<boolean>(false);
   const [decryptedWallet, setdecryptedWallet] = useState<any>(null);
   const [requestConnection, setRequestConnection] = useState<any>(null);
   const [requestBuyOrder, setRequestBuyOrder] = useState<any>(null);
-  const [authenticatedMode, setAuthenticatedMode] = useState("qort");
   const [requestAuthentication, setRequestAuthentication] = useState<any>(null);
   const [userInfo, setUserInfo] = useState<any>(null);
   const [balance, setBalance] = useState<any>(null);
-  const [ltcBalance, setLtcBalance] = useState<any>(null);
   const [paymentTo, setPaymentTo] = useState<string>("");
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentPassword, setPaymentPassword] = useState<string>("");
@@ -701,17 +696,6 @@ function App() {
     getBalanceFunc();
     refetchUserInfo();
   };
-  const getLtcBalanceFunc = () => {
-    setLtcBalanceLoading(true);
-    chrome?.runtime?.sendMessage({ action: "ltcBalance" }, (response) => {
-      if (!response?.error && !isNaN(+response)) {
-        setLtcBalance(response);
-      }
-      setLtcBalanceLoading(false);
-    });
-  };
-
-
   const clearAllStates = () => {
     setRequestConnection(null);
     setRequestAuthentication(null);
@@ -1045,18 +1029,6 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (
-      authenticatedMode === "ltc" &&
-      !ltcBalanceLoading &&
-      ltcBalance === null
-    ) {
-      getLtcBalanceFunc();
-    }
-  }, [authenticatedMode]);
-
-
-
   const saveFileToDiskFunc = async () => {
     try {
       await saveFileToDisk(
@@ -1202,7 +1174,6 @@ function App() {
     setRequestAuthentication(null);
     setUserInfo(null);
     setBalance(null);
-    setLtcBalance(null);
     setPaymentTo("");
     setPaymentAmount(0);
     setPaymentPassword("");
@@ -1391,127 +1362,9 @@ function App() {
     }}
   >
     <Spacer height="20px" />
-    <Box sx={{
-      width: '100%',
-      display: 'flex',
-      justifyContent: 'flex-start'
-    }}>
-        {authenticatedMode === "qort" && (
-              <Tooltip
-                title={<span style={{ color: "white", fontSize: "14px", fontWeight: 700 }}>LITECOIN WALLET</span>} 
-                placement="left"
-                arrow
-                sx={{ fontSize: "24" }}
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      color: "#ffffff",
-                      backgroundColor: "#444444",
-                    },
-                  },
-                  arrow: {
-                    sx: {
-                      color: "#444444",
-                    },
-                  },
-                }}
-              >
-                <img
-                  onClick={() => {
-                   
-                    setAuthenticatedMode("ltc");
-                  }}
-                  src={ltcLogo}
-                  style={{
-                    cursor: "pointer",
-                    width: "20px",
-                    height: "auto",
-                  }}
-                />
-              </Tooltip>
-            )}
-            {authenticatedMode === "ltc" && (
-              <Tooltip
-                title={<span style={{ color: "white", fontSize: "14px", fontWeight: 700 }}>QORTAL WALLET</span>} 
-                placement="left"
-                arrow
-                sx={{ fontSize: "24" }}
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      color: "#ffffff",
-                      backgroundColor: "#444444",
-                    },
-                  },
-                  arrow: {
-                    sx: {
-                      color: "#444444",
-                    },
-                  },
-                }}
-              >
-                <img
-                  onClick={() => {
-                    setAuthenticatedMode("qort");
-                  }}
-                  src={qortLogo}
-                  style={{
-                    cursor: "pointer",
-                    width: "20px",
-                    height: "auto",
-                  }}
-                />
-              </Tooltip>
-            )}
-            </Box>
     <Spacer height="48px" />
 
-    {authenticatedMode === "ltc" ? (
-      <>
-        <img src={ltcLogo} />
-        <Spacer height="32px" />
-        <CopyToClipboard text={rawWallet?.ltcAddress}>
-          <AddressBox>
-            {rawWallet?.ltcAddress?.slice(0, 6)}...
-            {rawWallet?.ltcAddress?.slice(-4)} <img src={Copy} />
-          </AddressBox>
-        </CopyToClipboard>
-        <Spacer height="10px" />
-        {ltcBalanceLoading && (
-          <CircularProgress color="success" size={16} />
-        )}
-        {!isNaN(+ltcBalance) && !ltcBalanceLoading && (
-          <Box
-            sx={{
-              gap: "10px",
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <TextP
-              sx={{
-                textAlign: "center",
-                lineHeight: "24px",
-                fontSize: "20px",
-                fontWeight: 700,
-              }}
-            >
-              {ltcBalance} LTC
-            </TextP>
-            <RefreshIcon
-              onClick={getLtcBalanceFunc}
-              sx={{
-                fontSize: "16px",
-                color: "white",
-                cursor: "pointer",
-              }}
-            />
-          </Box>
-        )}
-        <AddressQRCode targetAddress={rawWallet?.ltcAddress} />
-      </>
-    ) : (
-      <>
+    <>
        <MainAvatar setOpenSnack={setOpenSnack}  setInfoSnack={setInfoSnack} myName={userInfo?.name} balance={balance} />
         <Spacer height="32px" />
         <TextP
@@ -1594,8 +1447,7 @@ function App() {
           Transfer QORT
         </CustomButton>
         <AddressQRCode targetAddress={rawWallet?.address0} />
-      </>
-    )}
+    </>
     <TextP
       sx={{
         textAlign: "center",
@@ -1839,76 +1691,6 @@ function App() {
               </Tooltip>
               </>
             )}
-          
-            {/* {authenticatedMode === "qort" && (
-              <Tooltip
-                title={<span style={{ color: "white", fontSize: "14px", fontWeight: 700 }}>LITECOIN WALLET</span>} 
-                placement="left"
-                arrow
-                sx={{ fontSize: "24" }}
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      color: "#ffffff",
-                      backgroundColor: "#444444",
-                    },
-                  },
-                  arrow: {
-                    sx: {
-                      color: "#444444",
-                    },
-                  },
-                }}
-              >
-                <img
-                  onClick={() => {
-                    if(desktopViewMode !== 'home'){
-                      setIsOpenDrawerProfile((prev)=> !prev)
-                    }
-                    setAuthenticatedMode("ltc");
-                  }}
-                  src={ltcLogo}
-                  style={{
-                    cursor: "pointer",
-                    width: "20px",
-                    height: "auto",
-                  }}
-                />
-              </Tooltip>
-            )}
-            {authenticatedMode === "ltc" && (
-              <Tooltip
-                title={<span style={{ color: "white", fontSize: "14px", fontWeight: 700 }}>QORTAL WALLET</span>} 
-                placement="left"
-                arrow
-                sx={{ fontSize: "24" }}
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      color: "#ffffff",
-                      backgroundColor: "#444444",
-                    },
-                  },
-                  arrow: {
-                    sx: {
-                      color: "#444444",
-                    },
-                  },
-                }}
-              >
-                <img
-                  onClick={() => {
-                    setAuthenticatedMode("qort");
-                  }}
-                  src={qortLogo}
-                  style={{
-                    cursor: "pointer",
-                    width: "20px",
-                    height: "auto",
-                  }}
-                />
-              </Tooltip>
-            )} */}
             <Spacer height="20px" />
             <CoreSyncStatus />
             <Spacer height="20px" />
