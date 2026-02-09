@@ -2544,6 +2544,60 @@ export const getCrossChainServerInfo = async (data)=> {
 					} 
 }
 
+export const startCrossChainServer = async (
+  data,
+  isFromExtension?,
+  appInfo?: { tabId?: number; name?: string }
+) => {
+  const isGateway = await isRunningGateway();
+  if (isGateway) {
+    throw new Error("This action cannot be done through a public node");
+  }
+  if (
+    !appInfo?.tabId ||
+    !appInfo?.name ||
+    !hasSessionPermission(appInfo.tabId, appInfo.name, "START_CROSSCHAIN_SERVER")
+  ) {
+    throw new Error("User not authenticated");
+  }
+  const requiredFields = ["coin"];
+  const missingFields: string[] = [];
+  requiredFields.forEach((field) => {
+    if (!data[field]) {
+      missingFields.push(field);
+    }
+  });
+  if (missingFields.length > 0) {
+    const missingFieldsString = missingFields.join(", ");
+    const errorMsg = `Missing fields: ${missingFieldsString}`;
+    throw new Error(errorMsg);
+  }
+  const url = `/crosschain/${data.coin.toLowerCase()}/start`;
+  try {
+    const endpoint = await createEndpoint(url);
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "*/*",
+        "Content-Type": "application/json",
+      },
+    });
+    if (!response.ok) throw new Error("Failed to fetch");
+    let res;
+    try {
+      res = await response.clone().json();
+    } catch (e) {
+      res = await response.text();
+    }
+    if (res?.error && res?.message) {
+      throw new Error(res.message);
+    }
+    return res;
+  } catch (error) {
+    throw new Error(error?.message || "Error starting crosschain server");
+  }
+};
+
 export const getTxActivitySummary = async (data) => {
     const requiredFields = ['coin'];
     const missingFields: string[] = [];

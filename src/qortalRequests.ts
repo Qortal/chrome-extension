@@ -1,5 +1,5 @@
 import { banFromGroup, gateways, getApiKeyFromStorage, getNameInfoForOthers } from "./background";
-import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banFromGroupRequest, buyNameRequest, cancelGroupBanRequest, cancelGroupInviteRequest, cancelSellNameRequest, cancelSellOrder, createBuyOrder, createGroupRequest, createPoll, createSellOrder, decryptAESGCMRequest, decryptData, decryptDataWithSharingKey, decryptQortalGroupData, deleteHostedData, deleteListItems, deployAt, encryptData, encryptDataWithSharingKey, encryptQortalGroupData, getArrrSyncStatus, getCrossChainServerInfo, getDaySummary, getForeignFee, getHostedData, getListItems, getNodeInfo, getNodeStatus, getServerConnectionHistory, getTxActivitySummary, getUserAccount, getUserWallet, getUserWalletInfo, getUserWalletTransactions, getWalletBalance, inviteToGroupRequest, joinGroup, kickFromGroupRequest, leaveGroupRequest,  multiPaymentWithPrivateData, playEncryptedMedia, publishMultipleQDNResources, publishQDNResource, reEncryptQortalKeys, registerNameRequest, removeForeignServer, removeGroupAdminRequest, saveFile, sellNameRequest, sendChatMessage, sendCoin, sessionPermissions, setCurrentForeignServer, showPdfReader, signForeignFees, signTransaction, transferAssetRequest,  updateForeignFee, updateGroupRequest, updateNameRequest, voteOnPoll } from "./qortalRequests/get";
+import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banFromGroupRequest, buyNameRequest, cancelGroupBanRequest, cancelGroupInviteRequest, cancelSellNameRequest, cancelSellOrder, createBuyOrder, createGroupRequest, createPoll, createSellOrder, decryptAESGCMRequest, decryptData, decryptDataWithSharingKey, decryptQortalGroupData, deleteHostedData, deleteListItems, deployAt, encryptData, encryptDataWithSharingKey, encryptQortalGroupData, getArrrSyncStatus, getCrossChainServerInfo, getDaySummary, startCrossChainServer, getForeignFee, getHostedData, getListItems, getNodeInfo, getNodeStatus, getServerConnectionHistory, getTxActivitySummary, getUserAccount, getUserWallet, getUserWalletInfo, getUserWalletTransactions, getWalletBalance, inviteToGroupRequest, joinGroup, kickFromGroupRequest, leaveGroupRequest,  multiPaymentWithPrivateData, playEncryptedMedia, publishMultipleQDNResources, publishQDNResource, reEncryptQortalKeys, registerNameRequest, removeForeignServer, removeGroupAdminRequest, saveFile, sellNameRequest, sendChatMessage, sendCoin, sessionPermissions, setCurrentForeignServer, showPdfReader, signForeignFees, signTransaction, transferAssetRequest,  updateForeignFee, updateGroupRequest, updateNameRequest, voteOnPoll } from "./qortalRequests/get";
 
  export const listOfAllQortalRequests = [
    'GET_USER_ACCOUNT',
@@ -17,6 +17,7 @@ import { addForeignServer, addGroupAdminRequest, addListItems, adminAction, banF
    'GET_WALLET_BALANCE',
    'GET_USER_WALLET_INFO',
    'GET_CROSSCHAIN_SERVER_INFO',
+  'START_CROSSCHAIN_SERVER',
    'GET_TX_ACTIVITY_SUMMARY',
    'GET_FOREIGN_FEE',
    'UPDATE_FOREIGN_FEE',
@@ -196,7 +197,8 @@ export const VALID_SESSION_PERMISSIONS = [
   'GET_USER_ACCOUNT',
   'GET_LIST_ITEMS',
   'SIGN_FOREIGN_FEES',
-   'REENCRYPT_GROUP_KEYS'
+   'REENCRYPT_GROUP_KEYS',
+  'START_CROSSCHAIN_SERVER'
 ];
 
 // Permissions automatically granted for the session when GET_USER_ACCOUNT is accepted
@@ -209,6 +211,7 @@ export const AUTO_GRANTED_PERMISSIONS_ON_AUTH = [
   'GET_USER_WALLET_TRANSACTIONS',
   'GET_LIST_ITEMS',
   'SIGN_FOREIGN_FEES',
+  'START_CROSSCHAIN_SERVER',
 ];
 
 export function setSessionPermissions(tabId, qapName, permissions) {
@@ -538,6 +541,19 @@ chrome?.runtime?.onMessage.addListener((request, sender, sendResponse) => {
         const data = request.payload;
       
         getCrossChainServerInfo(data)
+          .then((res) => {
+            sendResponse(res);
+          })
+          .catch((error) => {
+            sendResponse({ error: error.message });
+          });
+
+        break;
+      }
+      case "START_CROSSCHAIN_SERVER": {
+        const data = request.payload;
+
+        startCrossChainServer(data, isFromExtension, appInfo)
           .then((res) => {
             sendResponse(res);
           })
